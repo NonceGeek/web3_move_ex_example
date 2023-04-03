@@ -23,6 +23,7 @@ defmodule Web3MoveExExample.MixProject do
     [
       {:web3_move_ex, "~> 0.4.0"},
       {:web3_aptos_ex, "~> 1.0.6"},
+      {:eth_wallet, "~> 0.1.0"},
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]

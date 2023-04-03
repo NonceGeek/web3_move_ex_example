@@ -9,13 +9,13 @@ defmodule Web3MoveExExample do
   @testnet_contract_addr "0xc71124a51e0d63cfc6eb04e690c39a4ea36774ed4df77c00f7cbcbc9d0505b2c"
 
 
-  # def gen_acct_and_get_faucet(network_type) do
-  #   {:ok, acct} = Aptos.generate_keys()
-  #   {:ok, client} = Aptos.connect(network_type)
-  #   {:ok, _res} = Aptos.get_faucet(client, acct)
-  #   Process.sleep(2000)  # 用 2 秒等待交易成功
-  #   %{res: Aptos.get_balance(client, acct), acct: acct}
-  # end
+  def gen_acct_and_get_faucet(network_type) do
+    {:ok, acct} = Aptos.generate_keys()
+    {:ok, client} = Aptos.connect(network_type)
+    {:ok, _res} = Aptos.get_faucet(client, acct)
+    Process.sleep(2000)  # 用 2 秒等待交易成功
+    %{res: Aptos.get_balance(client, acct), acct: acct}
+  end
 
   # +------+
   # | init |
@@ -25,11 +25,348 @@ defmodule Web3MoveExExample do
     do_call_func(client, acct, contract_addr, "init", "init", [did_type, description], [:u64, :string])
   end
 
-  # +--------------------+
-  # | address_aggregator |
-  # +--------------------+
+  # +-----------------+
+  # | addr_aggregator |
+  # +-----------------+
 
-  # TODO.
+  def test_addr_aggregator_module(acct, contract_addr \\ @testnet_contract_addr) do
+    # init acct
+    {:ok, client} = Aptos.RPC.connect("https://fullnode.testnet.aptoslabs.com/v1")
+    Logger.info("acct.addr generated random: #{acct.address_hex}")
+    Logger.info("acct.priv generated random: #{acct.priv_key_hex}")
+
+    # +------------------------+
+    # | init aggregators check |
+    # +------------------------+
+    # init aggregators
+    call_func_init(client, acct, contract_addr, 0, "a Test DID.")
+    Process.sleep(2000)  # 用 2 秒等待交易成功
+
+    # +------------------------------------------+
+    # | update_addr_aggregator_description check |
+    # +------------------------------------------+
+    # get_resource before updated.
+    {:ok,
+      %{
+        data:
+        %{
+          description: "a Test DID.",
+          type: "0"
+        }
+      }
+    } =
+    Aptos.get_resource(client, acct, "#{contract_addr}::addr_aggregator::AddrAggregator")
+
+    call_func_update_addr_aggregator_description(client, acct, contract_addr, "a Test DID Updated.")
+
+    Process.sleep(2000)  # 用 2 秒等待交易成功
+
+    # get_resource after updated.
+    {:ok,
+      %{
+        data:
+        %{
+          description: "a Test DID Updated.",
+          type: "0"
+        }
+      }
+    } =
+    Aptos.get_resource(client, acct, "#{contract_addr}::addr_aggregator::AddrAggregator")
+
+    # +----------------+
+    # | add addr check |
+    # +----------------+
+
+    # generate an ETH acct.
+    acct_eth = EthWallet.generate_keys()
+    %{res: true} =
+      call_func_add_addr(client, acct, contract_addr, 0, acct_eth.addr, "", ["ethereum"], "my_eth_acct", "", 0)
+
+    Process.sleep(2000)  # 用 2 秒等待交易成功
+    # check is the info correct in resource.
+
+    {:ok,
+      %{
+        data: %{addr_infos_map: %{
+          handle: handle_key
+        },
+        addrs: [eth_addr]}}} =
+    Aptos.get_resource(client, acct, "#{contract_addr}::addr_aggregator::AddrAggregator")
+
+    {:ok,
+      %{
+        addr_type: "0",
+        chains: ["ethereum"],
+        description: "my_eth_acct",
+        expired_at: "0",
+        id: "1",
+        pubkey: "",
+        signature: "0x",
+        spec_fields: "",
+        updated_at: "0"
+      }
+    } =
+    Web3AptosEx.Aptos.get_table_item(
+      client,
+      handle_key,
+      "0x1::string::String",
+      "#{contract_addr}::addr_info::AddrInfo",
+      eth_addr
+    )
+
+    # +---------------------------------------------+
+    # | update_addr_info_for_non_verification check |
+    # +---------------------------------------------+
+    %{res: true} =
+      call_func_update_addr_info_for_non_verification(
+        client,
+        acct,
+        contract_addr,
+        eth_addr,
+        ["ethereum", "polygon"],
+        "my_eth_acct_updated",
+        "{\"str\": \"str\"}",
+        100)
+
+    {:ok,
+      %{
+        addr_type: "0",
+        chains: ["ethereum", "polygon"],
+        description: "my_eth_acct_updated",
+        expired_at: "100",
+        id: "1",
+        msg: msg,
+        pubkey: "",
+        signature: "0x",
+        spec_fields: "{\"str\": \"str\"}",
+      }
+    } =
+    Web3AptosEx.Aptos.get_table_item(
+      client,
+      handle_key,
+      "0x1::string::String",
+      "#{contract_addr}::addr_info::AddrInfo",
+      eth_addr
+    )
+
+    # +-----------------------+
+    # | update_eth_addr check |
+    # +-----------------------+
+
+    # verify addr
+    %{sig: sig} = EthWallet.sign_compact(msg, acct_eth.priv)
+    %{
+      res: true
+    } =
+    call_func_update_eth_addr(client, acct, contract_addr, eth_addr, sig)
+
+    # check if signed success.
+
+    {:ok,
+    %{
+      signature: sig_in_resource
+     }
+    } =
+    Web3AptosEx.Aptos.get_table_item(
+      client,
+      handle_key,
+      "0x1::string::String",
+      "#{contract_addr}::addr_info::AddrInfo",
+      eth_addr
+    )
+
+    Logger.info("signature in resource: #{sig_in_resource}")
+
+    # +------------------------+
+    # | update_addr_info check |
+    # +------------------------+
+    %{
+      res: true
+    } =
+      call_func_update_addr_info(
+        client,
+        acct,
+        contract_addr,
+        eth_addr,
+        ["bsc"],
+        "it updated",
+        "zzz",
+        10000)
+    {:ok,
+      res
+    } =
+    Web3AptosEx.Aptos.get_table_item(
+      client,
+      handle_key,
+      "0x1::string::String",
+      "#{contract_addr}::addr_info::AddrInfo",
+      eth_addr
+    )
+    Logger.info("update_addr_info(signature should be reset): #{inspect(res)}")
+    Logger.info("msg before: #{msg}")
+    Logger.info("msg after(it should be changed after): #{res.msg}")
+
+    # +------------------------+
+    # | todo: aptos addr check |
+    # +------------------------+
+
+    # +-------------------+
+    # | delete_addr check |
+    # +-------------------+
+    %{res: true} =
+      call_func_delete_addr(client, acct, contract_addr, eth_addr)
+
+    {:ok,
+    %{
+      data: %{addr_infos_map: %{
+        handle: _handle_key
+      },
+      addrs: addrs}}} =
+    Aptos.get_resource(client, acct, "#{contract_addr}::addr_aggregator::AddrAggregator")
+    Logger.info("addrs should be empty in resource: #{inspect(addrs)}")
+
+    # check events are success added.
+    {:ok, add_addr_events} = Aptos.get_events(
+    client,
+    acct.address_hex,
+    "#{contract_addr}::addr_aggregator::AddrAggregator",
+    "add_addr_events")
+    Logger.info("add_addr_events: #{inspect(add_addr_events)}")
+
+    {:ok, update_addr_events} = Aptos.get_events(
+      client,
+      acct.address_hex,
+      "#{contract_addr}::addr_aggregator::AddrAggregator",
+      "update_addr_events")
+    Logger.info("update_addr_events: #{inspect(update_addr_events)}")
+
+    {:ok, update_addr_signature_events} = Aptos.get_events(
+      client,
+      acct.address_hex,
+      "#{contract_addr}::addr_aggregator::AddrAggregator",
+      "update_addr_signature_events")
+    Logger.info("update_addr_signature_events: #{inspect(update_addr_signature_events)}")
+
+    {:ok, delete_addr_events} = Aptos.RPC.get_events(
+      client,
+      acct.address_hex,
+      "#{contract_addr}::addr_aggregator::AddrAggregator",
+      "delete_addr_events")
+    Logger.info("delete_addr_events: #{inspect(delete_addr_events)}")
+
+  end
+
+  def call_func_delete_addr(
+    client,
+    acct,
+    contract_addr,
+    addr)  do
+      do_call_func(
+        client,
+        acct,
+        contract_addr,
+        "addr_aggregator",
+        "delete_addr",
+        [addr],
+        ["string"]
+      )
+  end
+
+  def call_func_update_addr_info(
+    client,
+    acct,
+    contract_addr,
+    addr,
+    chains,
+    description,
+    spec_fields,
+    expired_at) do
+    do_call_func(
+      client,
+      acct,
+      contract_addr,
+      "addr_aggregator",
+      "update_addr_info",
+      [addr, chains, description, spec_fields, expired_at],
+      ["string", "vector<string>", "string", "string", "u64"]
+    )
+  end
+
+  def call_func_update_addr_info_for_non_verification(
+    client,
+    acct,
+    contract_addr,
+    addr,
+    chains,
+    description,
+    spec_fields,
+    expired_at) do
+    do_call_func(
+      client,
+      acct,
+      contract_addr,
+      "addr_aggregator",
+      "update_addr_info_for_non_verification",
+      [addr, chains, description, spec_fields, expired_at],
+      ["string", "vector<string>", "string", "string", "u64"]
+    )
+  end
+  @doc """
+    // Update addr aggregator description.
+    public entry fun update_addr_aggregator_description(acct: &signer, description: String) acquires AddrAggregator {
+        let addr_aggr = borrow_global_mut<AddrAggregator>(signer::address_of(acct));
+        addr_aggr.description = description;
+    }
+  """
+  def call_func_update_addr_aggregator_description(client, acct, contract_addr, description) do
+    do_call_func(
+      client,
+      acct,
+      contract_addr,
+      "addr_aggregator",
+      "update_addr_aggregator_description",
+      [description],
+      ["string"]
+    )
+  end
+
+  @doc """
+    public entry fun add_addr(
+        acct: &signer,
+        addr_type: u64,
+        addr: String,
+        pubkey: String,
+        chains: vector<String>,
+        description: String,
+        spec_fields: String,
+        expired_at: u64
+    ) acquires AddrAggregator {
+      ……
+    }
+  """
+  def call_func_add_addr(client, acct, contract_addr, addr_type, addr, pubkey, chains, description, sepc_fields, expired_at) do
+    do_call_func(
+      client,
+      acct,
+      contract_addr,
+      "addr_aggregator",
+      "add_addr",
+      [addr_type, addr, pubkey, chains, description, sepc_fields, expired_at],
+      ["u64", "string", "string", "vector<string>", "string", "string", "u64"]
+    )
+  end
+
+  def call_func_update_eth_addr(client, acct, contract_addr, addr, signature) do
+    do_call_func(
+      client,
+      acct,
+      contract_addr,
+      "addr_aggregator",
+      "update_eth_addr",
+      [addr, signature],
+      ["string", "string"]
+    )
+  end
 
   # +--------------------+
   # | service_aggregator |
@@ -38,18 +375,15 @@ defmodule Web3MoveExExample do
   @doc """
     generate a new acct and run all the funs in services module.
   """
-  def test_services_module(contract_addr \\ @testnet_contract_addr) do
+  def test_service_aggregator_module(acct, contract_addr \\ @testnet_contract_addr) do
     # init acct
-    {:ok, acct} = Aptos.generate_keys()
     {:ok, client} = Aptos.RPC.connect("https://fullnode.testnet.aptoslabs.com/v1")
-    {:ok, _tx_id} = Aptos.get_faucet(client, acct)
     Logger.info("acct.addr generated random: #{acct.address_hex}")
     Logger.info("acct.priv generated random: #{acct.priv_key_hex}")
-    Process.sleep(2000)  # 用 2 秒等待交易成功
 
-    # +-----------------------+
-    # | test init aggregators |
-    # +-----------------------+
+    # +------------------------+
+    # | init aggregators check |
+    # +------------------------+
     # init aggregators
     call_func_init(client, acct, contract_addr, 0, "a Test DID.")
     Process.sleep(2000)  # 用 2 秒等待交易成功
